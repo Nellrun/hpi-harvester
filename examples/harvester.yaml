@@ -1,0 +1,37 @@
+# Example hpi-harvester configuration.
+#
+# Copy this file to ./config/harvester.yaml and edit the values.
+# Validate with:  docker compose run --rm harvester harvester validate-config /config/harvester.yaml
+output_root: /data
+timezone: Europe/Madrid
+
+exporters:
+  # Variant 1: read the Last.fm API key from a file mounted into the container.
+  #
+  # NB: lastfm-backup re-downloads every page of scrobbles on every run
+  # (no incremental support). For long listening histories (tens of
+  # thousands of plays) the run can easily take 30+ minutes; bump
+  # timeout_seconds accordingly. Anecdotally ~800 pages = ~10 min.
+  - name: lastfm
+    command: lastfm-backup --api-key-file /secrets/lastfm.key --user YOUR_LASTFM_USERNAME
+    schedule: "0 3 * * *"
+    output:
+      mode: stdout
+      extension: json
+    timeout_seconds: 3600
+
+  # Variant 2: read the API key from an environment variable.
+  # Uncomment the block below (and comment out the variant above) to use it.
+  # The LASTFM_API_KEY value is forwarded into the subprocess; the placeholder
+  # ${LASTFM_API_KEY} is expanded against the harvester process's env at load
+  # time, which is itself populated from docker-compose.yml + .env.
+  #
+  # - name: lastfm
+  #   command: lastfm-backup --api-key "$LASTFM_API_KEY" --user YOUR_LASTFM_USERNAME
+  #   schedule: "0 3 * * *"
+  #   env:
+  #     LASTFM_API_KEY: "${LASTFM_API_KEY}"
+  #   output:
+  #     mode: stdout
+  #     extension: json
+  #   timeout_seconds: 3600

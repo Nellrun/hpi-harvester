@@ -1,0 +1,17 @@
+services:
+  harvester:
+    build: .
+    container_name: hpi-harvester
+    restart: unless-stopped
+    environment:
+      # Container timezone affects cron evaluation and log timestamps.
+      # Override via .env or shell to match your config's `timezone:` field.
+      - TZ=${TZ:-Europe/Madrid}
+      # Optional: only used by exporters that read the API key from env
+      # (see examples/harvester.yaml — the env-based variant is commented
+      # out by default).
+      - LASTFM_API_KEY=${LASTFM_API_KEY:-}
+    volumes:
+      - ./config:/config:ro
+      - ./secrets:/secrets:ro
+      - ${HPI_DATA_DIR:-./data}:/data

@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Thin CLI shim for ``karlicoss/lastfm-backup``.
+
+The upstream tool (``lastfm_backup.py``) expects a ``config.py`` module in
+the current working directory exposing ``USERNAME`` and ``API_KEY``; it
+does not accept any command-line arguments. This wrapper provides a
+conventional CLI (``--user`` plus ``--api-key`` or ``--api-key-file``) by
+materialising a temporary ``config.py`` and exec'ing the upstream script
+with cwd pointed at it.
+
+The wrapper is installed into the image as ``/usr/local/bin/lastfm-backup``
+so configurations like the one in ``examples/harvester.yaml`` work as
+documented.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+def _resolve_api_key(args: argparse.Namespace) -> str:
+    if args.api_key:
+        return args.api_key
+    if args.api_key_file:
+        return Path(args.api_key_file).read_text().strip()
+    raise SystemExit("error: one of --api-key or --api-key-file is required")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="lastfm-backup",
+        description="Dump Last.fm scrobbles as JSON to stdout.",
+    )
+    parser.add_argument("--user", required=True, help="Last.fm username")
+    key_group = parser.add_mutually_exclusive_group()
+    key_group.add_argument(
+        "--api-key-file",
+        help="Path to a file containing the API key on a single line",
+    )
+    key_group.add_argument(
+        "--api-key",
+        help="API key value (prefer --api-key-file on shared machines)",
+    )
+    args = parser.parse_args()
+
+    api_key = _resolve_api_key(args)
+
+    upstream = shutil.which("lastfm_backup.py")
+    if upstream is None:
+        raise SystemExit(
+            "error: lastfm_backup.py not found on PATH; "
+            "is karlicoss/lastfm-backup installed?"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="lastfm_backup_wrapper_") as workdir:
+        # The upstream script does ``import config``. Python only adds the
+        # script's directory (not cwd) to sys.path, so we publish the
+        # temp directory via PYTHONPATH instead. ``repr()`` quoting makes
+        # the file safe even if username or key contain quotes/newlines.
+        config_path = Path(workdir) / "config.py"
+        config_path.write_text(
+            f"USERNAME = {args.user!r}\nAPI_KEY = {api_key!r}\n"
+        )
+        env = dict(os.environ)
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = (
+            f"{workdir}{os.pathsep}{existing}" if existing else workdir
+        )
+        result = subprocess.run(
+            [sys.executable, upstream],
+            cwd=workdir,
+            env=env,
+            check=False,
+        )
+    return result.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())
