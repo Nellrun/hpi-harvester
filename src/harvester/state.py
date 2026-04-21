@@ -114,3 +114,34 @@ class State:
                 (exporter,),
             ).fetchone()
             return dict(row) if row is not None else None
+
+    def find_success_run(
+        self, exporter: str, output_path: Path
+    ) -> Optional[tuple[str, str]]:
+        """Return ``(started_at, finished_at)`` for the successful run that
+        produced ``output_path``, or ``None`` if no such row exists.
+
+        Used by the manifest writer to attach per-snapshot run metadata.
+        Matches by exact string equality of the stored ``output_path``: the
+        caller must pass the same absolute path that the runner recorded.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT started_at, finished_at
+                  FROM runs
+                 WHERE exporter = ?
+                   AND status = ?
+                   AND output_path = ?
+                 ORDER BY id DESC
+                 LIMIT 1
+                """,
+                (exporter, STATUS_SUCCESS, str(output_path)),
+            ).fetchone()
+            if row is None:
+                return None
+            started = row["started_at"]
+            finished = row["finished_at"]
+            if started is None or finished is None:
+                return None
+            return (started, finished)

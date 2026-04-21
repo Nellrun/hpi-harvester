@@ -12,6 +12,7 @@ from harvester.config import (
     ExporterConfig,
     HarvesterConfig,
     OutputConfig,
+    effective_write_manifest,
     load_config,
 )
 
@@ -181,6 +182,109 @@ def test_env_var_unset_leaves_placeholder_and_warns(
         config = load_config(path)
     assert config.exporters[0].env == {"MY_KEY": "${MISSING_KEY_FOR_HARVESTER_TEST}"}
     assert any("undefined shell variable" in r.message for r in caplog.records)
+
+
+def test_write_manifest_defaults_to_false(tmp_path: Path) -> None:
+    path = _write_yaml(
+        tmp_path,
+        """
+        output_root: /data
+        exporters:
+          - name: lastfm
+            command: x
+            schedule: "0 3 * * *"
+            output: {mode: stdout, extension: json}
+        """,
+    )
+    config = load_config(path)
+    assert config.write_manifest is False
+    assert config.exporters[0].write_manifest is None
+
+
+def test_write_manifest_parsed_globally(tmp_path: Path) -> None:
+    path = _write_yaml(
+        tmp_path,
+        """
+        output_root: /data
+        write_manifest: true
+        exporters:
+          - name: lastfm
+            command: x
+            schedule: "0 3 * * *"
+            output: {mode: stdout, extension: json}
+        """,
+    )
+    config = load_config(path)
+    assert config.write_manifest is True
+
+
+def test_write_manifest_per_exporter_override(tmp_path: Path) -> None:
+    path = _write_yaml(
+        tmp_path,
+        """
+        output_root: /data
+        write_manifest: true
+        exporters:
+          - name: with-manifest
+            command: x
+            schedule: "0 3 * * *"
+            output: {mode: stdout, extension: json}
+          - name: without-manifest
+            command: y
+            schedule: "0 4 * * *"
+            output: {mode: stdout, extension: json}
+            write_manifest: false
+        """,
+    )
+    config = load_config(path)
+    assert config.exporters[0].write_manifest is None
+    assert config.exporters[1].write_manifest is False
+
+
+def test_effective_write_manifest_inherits_when_none() -> None:
+    exporter = ExporterConfig(
+        name="e",
+        command="x",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+    )
+    config_off = HarvesterConfig(
+        output_root=Path("/data"), exporters=[exporter]
+    )
+    assert effective_write_manifest(config_off, exporter) is False
+
+    config_on = HarvesterConfig(
+        output_root=Path("/data"), write_manifest=True, exporters=[exporter]
+    )
+    assert effective_write_manifest(config_on, exporter) is True
+
+
+def test_effective_write_manifest_per_exporter_wins() -> None:
+    forced_on = ExporterConfig(
+        name="on",
+        command="x",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+        write_manifest=True,
+    )
+    forced_off = ExporterConfig(
+        name="off",
+        command="x",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+        write_manifest=False,
+    )
+    global_off = HarvesterConfig(
+        output_root=Path("/data"), exporters=[forced_on, forced_off]
+    )
+    global_on = HarvesterConfig(
+        output_root=Path("/data"), write_manifest=True, exporters=[forced_on, forced_off]
+    )
+    # Per-exporter override wins in both directions, regardless of the global.
+    assert effective_write_manifest(global_off, forced_on) is True
+    assert effective_write_manifest(global_off, forced_off) is False
+    assert effective_write_manifest(global_on, forced_on) is True
+    assert effective_write_manifest(global_on, forced_off) is False
 
 
 def test_resolve_paths_idempotent() -> None:

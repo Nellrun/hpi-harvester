@@ -51,6 +51,9 @@ class ExporterConfig(BaseModel):
     output: OutputConfig
     timeout_seconds: int = 1800
     env: dict[str, str] = Field(default_factory=dict)
+    # Per-exporter override for HarvesterConfig.write_manifest. ``None`` means
+    # "inherit the global value"; True/False force it regardless of the global.
+    write_manifest: Optional[bool] = None
 
     @model_validator(mode="after")
     def _check_argument_placeholder(self) -> ExporterConfig:
@@ -69,6 +72,10 @@ class HarvesterConfig(BaseModel):
     timezone: str = "UTC"
     log_dir: Optional[Path] = None
     state_db: Optional[Path] = None
+    # Global default for the public ``_index.json`` manifest. Off by default so
+    # existing deployments keep their behaviour; set to ``true`` once at least
+    # one consumer depends on the manifest format.
+    write_manifest: bool = False
     exporters: list[ExporterConfig]
 
     @field_validator("exporters")
@@ -117,6 +124,19 @@ def _expand_env_in_exporters(exporters: list[dict]) -> None:
                 )
             env[key] = expanded
         exporter["env"] = env
+
+
+def effective_write_manifest(
+    config: HarvesterConfig, exporter: ExporterConfig
+) -> bool:
+    """Resolve the manifest flag for ``exporter``.
+
+    Per-exporter ``write_manifest`` takes precedence; when it is ``None``, the
+    global :attr:`HarvesterConfig.write_manifest` applies.
+    """
+    if exporter.write_manifest is None:
+        return config.write_manifest
+    return exporter.write_manifest
 
 
 def load_config(path: Path) -> HarvesterConfig:

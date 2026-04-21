@@ -16,9 +16,15 @@ from harvester.runner import (
 from harvester.state import State
 
 
-def _make_config(tmp_path: Path, exporters: list[ExporterConfig]) -> HarvesterConfig:
+def _make_config(
+    tmp_path: Path,
+    exporters: list[ExporterConfig],
+    *,
+    write_manifest: bool = False,
+) -> HarvesterConfig:
     config = HarvesterConfig(
         output_root=tmp_path / "data",
+        write_manifest=write_manifest,
         exporters=exporters,
     )
     return config.resolve_paths()
@@ -334,3 +340,152 @@ def test_log_file_is_written_on_failure(tmp_path: Path) -> None:
     assert "status     : failed" in text
     assert "returncode : 5" in text
     assert "something-broke" in text
+
+
+# -----------------------------------------------------------------------------
+# Manifest integration (write_manifest flag)
+# -----------------------------------------------------------------------------
+
+
+def test_manifest_written_when_flag_enabled_globally(tmp_path: Path) -> None:
+    exporter = ExporterConfig(
+        name="dummy",
+        command="echo '{\"v\": 1}'",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+    )
+    config = _make_config(tmp_path, [exporter], write_manifest=True)
+    state = _make_state(config)
+
+    final_path = run_exporter(exporter, config, state)
+
+    manifest_path = final_path.parent / "_index.json"
+    assert manifest_path.exists()
+    data = json.loads(manifest_path.read_text())
+    assert data["schema_version"] == 1
+    assert data["exporter"] == "dummy"
+    assert len(data["snapshots"]) == 1
+    entry = data["snapshots"][0]
+    assert entry["path"] == final_path.name
+    assert entry["type"] == "file"
+    assert entry["size_bytes"] > 0
+    # State.db row is there → run_*_at populated.
+    assert entry["run_started_at"].endswith("Z")
+    assert entry["run_ended_at"].endswith("Z")
+
+
+def test_manifest_not_written_when_flag_disabled(tmp_path: Path) -> None:
+    exporter = ExporterConfig(
+        name="dummy",
+        command="echo '{}'",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+    )
+    # Default write_manifest=False.
+    config = _make_config(tmp_path, [exporter])
+    state = _make_state(config)
+
+    run_exporter(exporter, config, state)
+
+    assert not (config.output_root / "dummy" / "_index.json").exists()
+
+
+def test_manifest_preserved_when_flag_toggled_off(tmp_path: Path) -> None:
+    """Disabling the flag does not delete or mutate an existing manifest."""
+    exporter = ExporterConfig(
+        name="dummy",
+        command="echo '{}'",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+    )
+    config = _make_config(tmp_path, [exporter], write_manifest=False)
+    service_dir = config.output_root / "dummy"
+    service_dir.mkdir(parents=True)
+    stale = {"schema_version": 1, "exporter": "dummy", "sentinel": "stale"}
+    (service_dir / "_index.json").write_text(json.dumps(stale))
+    state = _make_state(config)
+
+    run_exporter(exporter, config, state)
+
+    # Manifest unchanged — runner must not touch it when the flag is off.
+    assert json.loads((service_dir / "_index.json").read_text()) == stale
+
+
+def test_manifest_per_exporter_override(tmp_path: Path) -> None:
+    with_manifest = ExporterConfig(
+        name="on",
+        command="echo '{}'",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+        write_manifest=True,
+    )
+    without_manifest = ExporterConfig(
+        name="off",
+        command="echo '{}'",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+        write_manifest=False,
+    )
+    # Global off, per-exporter overrides in both directions.
+    config = _make_config(
+        tmp_path, [with_manifest, without_manifest], write_manifest=False
+    )
+    state = _make_state(config)
+
+    run_exporter(with_manifest, config, state)
+    run_exporter(without_manifest, config, state)
+
+    assert (config.output_root / "on" / "_index.json").exists()
+    assert not (config.output_root / "off" / "_index.json").exists()
+
+
+def test_manifest_accumulates_across_runs(tmp_path: Path) -> None:
+    """A second successful run adds its snapshot to the manifest, sorted asc."""
+    exporter = ExporterConfig(
+        name="dummy",
+        command="echo '{}'",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+    )
+    config = _make_config(tmp_path, [exporter], write_manifest=True)
+    state = _make_state(config)
+
+    first = run_exporter(exporter, config, state)
+    # Sleep to ensure distinct second timestamps. The runner uses second-
+    # precision UTC timestamps, so a 1.1s wait is enough.
+    import time
+
+    time.sleep(1.1)
+    second = run_exporter(exporter, config, state)
+    assert first != second
+
+    data = json.loads((config.output_root / "dummy" / "_index.json").read_text())
+    stamps = [e["timestamp"] for e in data["snapshots"]]
+    assert len(stamps) == 2
+    assert stamps == sorted(stamps)
+
+
+def test_manifest_failure_does_not_fail_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A manifest error must not propagate — the snapshot is already on disk."""
+    exporter = ExporterConfig(
+        name="dummy",
+        command="echo '{}'",
+        schedule="0 3 * * *",
+        output=OutputConfig(mode="stdout", extension="json"),
+    )
+    config = _make_config(tmp_path, [exporter], write_manifest=True)
+    state = _make_state(config)
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("manifest is on fire")
+
+    monkeypatch.setattr("harvester.runner.update_manifest", boom)
+
+    final_path = run_exporter(exporter, config, state)
+    assert final_path.exists()
+    # State still records the run as success.
+    last = state.last_run("dummy")
+    assert last is not None
+    assert last["status"] == "success"

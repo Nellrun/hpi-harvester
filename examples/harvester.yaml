@@ -5,6 +5,13 @@
 output_root: /data
 timezone: Europe/Madrid
 
+# Write a public `_index.json` manifest in every exporter's directory after
+# each successful run. Consumers (HPI modules, scripts) can read it to
+# enumerate snapshots without globbing. Off by default for backward
+# compatibility; the sample config opts in. See SPEC.md → "Публичный
+# контракт для потребителей" for the format and guarantees.
+write_manifest: true
+
 exporters:
   # Variant 1: read the Last.fm API key from a file mounted into the container.
   #

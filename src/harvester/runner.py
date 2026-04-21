@@ -20,7 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from harvester.config import ExporterConfig, HarvesterConfig
+from harvester.config import ExporterConfig, HarvesterConfig, effective_write_manifest
+from harvester.manifest import update_manifest
 from harvester.state import (
     STATUS_FAILED,
     STATUS_SUCCESS,
@@ -342,3 +343,16 @@ def run_exporter(
             )
         except Exception:  # pragma: no cover - state DB issues should not mask the original error
             logger.exception("failed to update state for run_id=%s", run_id)
+
+        # Public manifest — opt-in, best effort. Runs after state.finish_run so
+        # that the freshly-written ``success`` row is visible to the manifest
+        # writer. Failures here are logged but never re-raised: the snapshot is
+        # already on disk and the state DB is already updated, so a manifest
+        # error must not surface as a failed run.
+        if status == STATUS_SUCCESS and effective_write_manifest(config, exporter):
+            try:
+                update_manifest(sdir, exporter.name, state)
+            except Exception:
+                logger.exception(
+                    "failed to update manifest for exporter=%s", exporter.name
+                )
