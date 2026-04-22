@@ -42,3 +42,17 @@ exporters:
   #     mode: stdout
   #     extension: json
   #   timeout_seconds: 3600
+
+  # Trakt.tv via purarue/traktexport. Prints the full account dump
+  # (history, ratings, watchlist, lists) to stdout. OAuth-based: requires
+  # a one-off `traktexport auth YOUR_TRAKT_USERNAME` inside the container
+  # before the first scheduled run (see README → Trakt setup). The creds
+  # file lives at $TRAKTEXPORT_CFG=/state/traktexport.json, which is
+  # mounted from ./state on the host and refreshed on every export.
+  - name: trakt
+    command: traktexport export YOUR_TRAKT_USERNAME
+    schedule: "0 4 * * *"
+    output:
+      mode: stdout
+      extension: json
+    timeout_seconds: 1800

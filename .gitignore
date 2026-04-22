@@ -209,4 +209,5 @@ __marimo__/
 # hpi-harvester local runtime data (used by docker-compose)
 /config/
 /secrets/
+/state/
 /data/

@@ -38,8 +38,18 @@ RUN pip install --no-cache-dir backoff setuptools wheel \
 COPY docker/lastfm-backup /usr/local/bin/lastfm-backup
 RUN chmod +x /usr/local/bin/lastfm-backup
 
-# Default volume mounts: configuration, secrets and the snapshot tree.
-VOLUME ["/config", "/secrets", "/data"]
+# purarue/traktexport — OAuth-based Trakt.tv exporter. Prints the full
+# account dump (history, ratings, watchlist, lists) to stdout. Unlike
+# lastfm-backup it needs a writable creds file that it creates on first
+# `traktexport auth` and refreshes on every run, so we pin the path to
+# /state (a read-write mount declared below) and out of the read-only
+# /secrets mount used for static keys.
+RUN pip install --no-cache-dir traktexport
+ENV TRAKTEXPORT_CFG=/state/traktexport.json
+
+# Default volume mounts: configuration, read-only secrets, writable
+# exporter state (OAuth refresh tokens et al.), and the snapshot tree.
+VOLUME ["/config", "/secrets", "/state", "/data"]
 
 # tini reaps zombie children spawned by the various exporters and forwards
 # signals so ``docker stop`` shuts the daemon down cleanly.

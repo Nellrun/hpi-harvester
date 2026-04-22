@@ -2,7 +2,10 @@
 
 A thin Python orchestrator that runs CLI exporters on a schedule and drops their output into a standardised filesystem layout. Designed to feed [HPI](https://github.com/karlicoss/HPI) (and any other tool that consumes raw exports) without coupling the orchestrator to any particular exporter — adding a new one is a YAML edit, not a code change.
 
-The MVP ships with a single exporter wired up: Last.fm, via [`lastfm-backup`](https://github.com/karlicoss/lastfm-backup).
+Bundled exporters:
+
+- **Last.fm** via [`lastfm-backup`](https://github.com/karlicoss/lastfm-backup) (API-key based).
+- **Trakt.tv** via [`traktexport`](https://github.com/purarue/traktexport) (OAuth; requires a one-off auth bootstrap — see [Trakt setup](#trakt-setup)).
 
 ## Quickstart
 
@@ -15,8 +18,10 @@ cd hpi-harvester
 2. Create the runtime directories (these are git-ignored):
 
    ```bash
-   mkdir -p config secrets data
+   mkdir -p config secrets state data
    ```
+
+   `state/` is the writable home for exporter runtime state (OAuth refresh tokens, cursors). It's separate from `secrets/` (read-only static keys) because tools like `traktexport` rewrite their creds on every run.
 
 3. Choose one of two ways to feed the API key into the container.
 
@@ -144,6 +149,48 @@ The bundled `lastfm-backup` is a thin wrapper (`docker/lastfm-backup`) around [`
 
 The upstream tool also has no incremental mode — every run re-downloads every page of scrobbles from the Last.fm API. For accounts with a long history (10k+ plays) a single run can take 30+ minutes; set `timeout_seconds:` accordingly.
 
+## Trakt setup
+
+[`traktexport`](https://github.com/purarue/traktexport) authenticates over OAuth, not a static API key, which means the very first export needs a human-in-the-loop step: create a Trakt app, authorise it against your account, and hand the PIN back. After that, runs are fully unattended — the stored refresh token is used to mint a new access token on every export, and the creds file rotates itself in place.
+
+Rather than wrestle with an interactive TTY inside Docker, do the auth once **on your host** and drop the resulting JSON into `./state/`. It's the same file `traktexport` would have produced inside the container, and we've pointed the container at that exact path via `TRAKTEXPORT_CFG=/state/traktexport.json` in the `Dockerfile`.
+
+1. Create a Trakt OAuth app at <https://trakt.tv/oauth/applications>.
+   - **Name:** anything (e.g. `hpi-harvester`).
+   - **Redirect URI:** `urn:ietf:wg:oauth:2.0:oob` (literal — this tells Trakt to hand you a PIN instead of redirecting to a URL).
+   - Save; note the **Client ID** and **Client Secret** on the next screen.
+
+2. Install `traktexport` on your host and run `auth` once. It'll prompt for the Client ID / Client Secret from step 1, then open a browser tab where you authorise the app and copy a PIN back into the terminal:
+
+   ```bash
+   pip install --user traktexport
+   traktexport auth YOUR_TRAKT_USERNAME
+   ```
+
+   On success the tokens land at `~/.local/share/traktexport.json` (on Linux / macOS; on other platforms `traktexport` prints the path).
+
+3. Copy the creds into the repo's `./state/` directory so the container can read them:
+
+   ```bash
+   mkdir -p state
+   cp ~/.local/share/traktexport.json state/traktexport.json
+   ```
+
+4. Edit `config/harvester.yaml` and replace `YOUR_TRAKT_USERNAME` in the `trakt` block with your actual Trakt username. Rebuild the image (the `traktexport` CLI is baked into it) and verify with a one-off run:
+
+   ```bash
+   docker compose build
+   docker compose up -d --force-recreate       # only needed if the daemon is already running
+   docker compose exec harvester harvester run-once trakt
+   ls data/trakt/
+   ```
+
+   The scheduled daemon picks up the new exporter at startup, so if you were already running it before this change, `up -d --force-recreate` is what restarts it against the new image + new config.
+
+**Note on the export payload.** `traktexport export` returns the entire account state — history (watched episodes/movies), ratings, watchlist, custom lists, profile metadata — as a single JSON blob on every run. There's no incremental mode; expect each snapshot to be 1–50 MB depending on how much you've watched.
+
+**Note on token rotation.** After the initial bootstrap you never touch `state/traktexport.json` again — `traktexport` rewrites it on every run so the refresh token in it stays valid indefinitely. If that file ever gets deleted or corrupted, repeat steps 2–3 to regenerate it; you don't need to create a new OAuth app.
+
 ## Troubleshooting
 
 - **Validate the config without starting the daemon:**
@@ -171,17 +218,22 @@ The upstream tool also has no incremental mode — every run re-downloads every 
 
 ## Integration with HPI
 
-Point your HPI config at the snapshot directory. For Last.fm:
+Point your HPI config at the snapshot directory. For Last.fm and Trakt:
 
 ```python
 # ~/.config/my/config/__init__.py
 from pathlib import Path
 
+HARVEST = Path('/path/to/hpi-harvester/data')
+
 class lastfm:
-    export_path = Path('/path/to/hpi-harvester/data/lastfm')  # all *.json files
+    export_path = HARVEST / 'lastfm'  # all *.json files
+
+class trakt:
+    export_path = HARVEST / 'trakt'   # all *.json files (consumed by purarue/HPI's my.trakt.export)
 ```
 
-`my.lastfm.gdpr` (and similar modules) will pick up every snapshot under that directory.
+`my.lastfm.gdpr` and [`my.trakt.export`](https://github.com/purarue/HPI) (and similar modules) will pick up every snapshot under the respective directory.
 
 ## Development
 

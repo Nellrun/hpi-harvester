@@ -14,4 +14,8 @@ services:
     volumes:
       - ./config:/config:ro
       - ./secrets:/secrets:ro
+      # Writable per-exporter state (OAuth refresh tokens, cursors, ...).
+      # Kept separate from :ro /secrets so tools like traktexport can
+      # rewrite their creds on token refresh.
+      - ./state:/state
       - ${HPI_DATA_DIR:-./data}:/data
