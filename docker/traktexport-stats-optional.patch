@@ -1,0 +1,45 @@
+--- a/export.py
++++ b/export.py
+@@ -10,7 +10,7 @@ from functools import lru_cache, partial
+ import backoff  # type: ignore[import]
+ from trakt.core import api, BASE_URL  # type: ignore[import]
+ from trakt.api import TokenAuth  # type: ignore[import]
+-from trakt.errors import RateLimitException  # type: ignore[import]
++from trakt.errors import RateLimitException, TraktInternalException  # type: ignore[import]
+ from logzero import logger  # type: ignore[import]
+ 
+ 
+@@ -95,6 +95,24 @@ def _trakt_paginate(
+             break
+ 
+ 
++def _optional_trakt_request(endpoint: str, default: Any) -> Any:
++    """Like ``_trakt_request`` but returns ``default`` if Trakt returns 5xx.
++
++    Some endpoints (notably ``users/<name>/stats``) intermittently return
++    ``500 Internal Server Error`` for accounts with any quirk in their
++    historical data. We don't want the entire export to abort for a
++    single non-critical field.
++    """
++    try:
++        return _trakt_request(endpoint, logger=logger)
++    except TraktInternalException as e:
++        logger.warning(
++            f"Trakt returned 5xx on optional endpoint {endpoint!r}; "
++            f"substituting default. ({e})"
++        )
++        return default
++
++
+ def full_export(username: str) -> Dict[str, Any]:
+     """Runs a full export for a trakt user"""
+     return {
+@@ -118,7 +136,7 @@ def full_export(username: str) -> Dict[str, Any]:
+             f"users/{username}/collection/movies", logger=logger
+         )
+         + _trakt_request(f"users/{username}/collection/shows", logger=logger),
+-        "stats": _trakt_request(f"users/{username}/stats", logger=logger),
++        "stats": _optional_trakt_request(f"users/{username}/stats", default={}),
+         "history": list(_trakt_paginate(f"users/{username}/history", logger=logger)),
+     }
+ 

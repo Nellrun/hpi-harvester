@@ -6,6 +6,7 @@ Bundled exporters:
 
 - **Last.fm** via [`lastfm-backup`](https://github.com/karlicoss/lastfm-backup) (API-key based).
 - **Trakt.tv** via [`traktexport`](https://github.com/purarue/traktexport) (OAuth; requires a one-off auth bootstrap — see [Trakt setup](#trakt-setup)).
+- **PlayStation playtime** via [`ps-timetracker-export`](tools/ps_timetracker_export) — scrapes [ps-timetracker.com](https://ps-timetracker.com/), which monitors PSN presence through a friend-bot (no PSN password or NPSSO required, only a browser session cookie). Tracks sessions, aggregate library, trophies-adjacent metadata. See [PS-Timetracker setup](#ps-timetracker-setup).
 
 ## Quickstart
 
@@ -191,6 +192,64 @@ Rather than wrestle with an interactive TTY inside Docker, do the auth once **on
 
 **Note on token rotation.** After the initial bootstrap you never touch `state/traktexport.json` again — `traktexport` rewrites it on every run so the refresh token in it stays valid indefinitely. If that file ever gets deleted or corrupted, repeat steps 2–3 to regenerate it; you don't need to create a new OAuth app.
 
+## PS-Timetracker setup
+
+[ps-timetracker.com](https://ps-timetracker.com/) is a third-party site that tracks PSN playtime by running a bot (`TRACK_horse`) that adds you as a friend and logs the games shown on your online-presence feed. No PSN password, NPSSO token, or official PSN API is involved — the service only sees what any PSN friend would see. Register on the site, add the bot as a friend on PSN, and play a session so the first data points land.
+
+The bundled `ps-timetracker-export` tool authenticates with a single browser cookie (`_my_app_session`), paginates `/profile/<name>/playtimes`, parses the HTML into JSON, and archives the raw HTML alongside the parsed output so you can re-parse older snapshots if the site's layout changes. It keeps its own incremental cursor in `state/ps_timetracker.json` — on each run it stops paginating as soon as it encounters rows already seen previously.
+
+1. Log in to ps-timetracker.com in your browser.
+2. Open DevTools → Application → Cookies → `https://ps-timetracker.com` and copy the value of the `_my_app_session` cookie.
+3. Choose one of two ways to feed the cookie into the container.
+
+   **a. File-based:**
+
+   ```bash
+   printf '%s' 'PASTE_THE_COOKIE_VALUE_HERE' > secrets/ps_timetracker.cookie
+   chmod 600 secrets/ps_timetracker.cookie
+   ```
+
+   The tool also accepts the form `_my_app_session=<value>` so you can paste a raw `Cookie:` header fragment without editing it.
+
+   **b. Env-based:** add the cookie to your `.env` next to `docker-compose.yml`:
+
+   ```bash
+   echo "PS_TIMETRACKER_COOKIE=PASTE_THE_COOKIE_VALUE_HERE" >> .env
+   ```
+
+   Then uncomment the "Variant 2" block for `ps_timetracker` in `config/harvester.yaml` and comment out Variant 1. Make sure `PS_TIMETRACKER_COOKIE` is forwarded to the harvester container in `docker-compose.yml` (same pattern as `LASTFM_API_KEY`).
+
+4. In `config/harvester.yaml`, replace `YOUR_PSN_NAME` in the `ps_timetracker` block with your PSN profile name as it appears on ps-timetracker.com.
+
+5. Rebuild and run once:
+
+   ```bash
+   docker compose build
+   docker compose up -d --force-recreate
+   docker compose exec harvester harvester run-once ps_timetracker
+   ls data/ps_timetracker/
+   ```
+
+   The first run is a full scan (follows the `rel="next"` link through every page of session history); subsequent runs are short because the incremental cursor stops pagination after the first page that's fully known.
+
+**Snapshot layout.** Unlike Last.fm and Trakt, each ps-timetracker snapshot is a directory, not a single file:
+
+```
+data/ps_timetracker/<timestamp>/
+├── raw/
+│   ├── profile.html
+│   └── playtimes_p1.html, playtimes_p2.html, ...
+├── library.json       # per-game aggregates from the profile landing page
+├── sessions.jsonl     # new sessions for this run (one JSON object per line)
+└── meta.json          # run metadata (pages fetched, stop reason, cursor values)
+```
+
+Sessions are append-only across snapshots: each run's `sessions.jsonl` holds *only* what was new since the previous run. Deduplicate by `playtime_id` when you consume them. The raw HTML is kept so you can re-parse historical snapshots with a newer parser if the site changes its markup.
+
+**Cookie rotation.** The `_my_app_session` cookie is long-lived (months) but will eventually expire. When it does, the exporter exits with code 2 and writes `auth error: ... returned the login form` to its per-run log. Re-extract the cookie from the browser and overwrite the secret (or `.env` value). Delete `state/ps_timetracker.json` first if you want to force a full re-scan rather than just pick up where you left off.
+
+**Timezone note.** The `start_local` / `end_local` / `last_played_local` fields are recorded verbatim from what ps-timetracker renders, which is the account's local time (not UTC). If your HPI consumer needs UTC, convert using the PSN profile's configured timezone — it is not included in the HTML.
+
 ## Troubleshooting
 
 - **Validate the config without starting the daemon:**
@@ -234,6 +293,13 @@ class trakt:
 ```
 
 `my.lastfm.gdpr` and [`my.trakt.export`](https://github.com/purarue/HPI) (and similar modules) will pick up every snapshot under the respective directory.
+
+For `ps_timetracker`, snapshots are directories rather than single JSON files, so an HPI module has to glob for inner files:
+
+```python
+class ps_timetracker:
+    export_path = HARVEST / 'ps_timetracker'      # <timestamp>/sessions.jsonl, <timestamp>/library.json
+```
 
 ## Development
 

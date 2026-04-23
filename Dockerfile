@@ -45,7 +45,24 @@ RUN chmod +x /usr/local/bin/lastfm-backup
 # /state (a read-write mount declared below) and out of the read-only
 # /secrets mount used for static keys.
 RUN pip install --no-cache-dir traktexport
+# Upstream traktexport 0.1.10 aborts the entire export if Trakt's
+# ``users/<name>/stats`` endpoint returns 5xx — which it does, persistently,
+# for accounts where the service has trouble computing aggregates. Patch
+# ``stats`` to become an optional field so the rest of the export (history,
+# watchlist, ratings, ...) still lands on disk.
+RUN apt-get update && apt-get install -y --no-install-recommends patch \
+ && rm -rf /var/lib/apt/lists/*
+COPY docker/traktexport-stats-optional.patch /tmp/traktexport-stats-optional.patch
+RUN cd "$(python -c 'import os, traktexport; print(os.path.dirname(traktexport.__file__))')" \
+ && patch -p1 < /tmp/traktexport-stats-optional.patch \
+ && rm /tmp/traktexport-stats-optional.patch
 ENV TRAKTEXPORT_CFG=/state/traktexport.json
+
+# ps-timetracker.com scraper — ships inside this repo under tools/.
+# Requires the ``_my_app_session`` cookie value at /secrets/ps_timetracker.cookie
+# and keeps its incremental cursor at /state/ps_timetracker.json.
+COPY tools/ps_timetracker_export /tmp/ps_timetracker_export
+RUN pip install --no-cache-dir /tmp/ps_timetracker_export && rm -rf /tmp/ps_timetracker_export
 
 # Default volume mounts: configuration, read-only secrets, writable
 # exporter state (OAuth refresh tokens et al.), and the snapshot tree.

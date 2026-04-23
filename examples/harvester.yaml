@@ -56,3 +56,48 @@ exporters:
       mode: stdout
       extension: json
     timeout_seconds: 1800
+
+  # ps-timetracker.com — unofficial PSN playtime tracker. Scrapes the HTML
+  # profile while logged in with a ``_my_app_session`` cookie extracted from
+  # the browser once (login form at https://ps-timetracker.com/). The cookie
+  # lives for months; re-save the file / .env value when runs start failing
+  # with exit code 2 (auth error). The exporter keeps its own incremental
+  # cursor at /state/ps_timetracker.json: it stops paginating as soon as it
+  # reaches rows already seen on a previous run. Delete the state file to
+  # force a full re-scan.
+  #
+  # Variant 1: read the cookie from a file mounted into the container.
+  - name: ps_timetracker
+    command: >
+      ps-timetracker-export
+      --output {OUTPUT}
+      --profile YOUR_PSN_NAME
+      --cookie-file /secrets/ps_timetracker.cookie
+      --state-file /state/ps_timetracker.json
+    schedule: "0 5 * * *"
+    output:
+      mode: argument
+      format: directory
+    timeout_seconds: 1800
+
+  # Variant 2: pass the cookie value via an environment variable (populated
+  # from docker-compose.yml + .env). Uncomment and comment out Variant 1.
+  # ``--cookie "$PS_TIMETRACKER_COOKIE"`` — the shell inside the subprocess
+  # expands $PS_TIMETRACKER_COOKIE to the value we forwarded in ``env:`` below.
+  # The ``${PS_TIMETRACKER_COOKIE}`` placeholder on the right-hand side is
+  # expanded against the harvester's own env at config load time.
+  #
+  # - name: ps_timetracker
+  #   command: >
+  #     ps-timetracker-export
+  #     --output {OUTPUT}
+  #     --profile YOUR_PSN_NAME
+  #     --cookie "$PS_TIMETRACKER_COOKIE"
+  #     --state-file /state/ps_timetracker.json
+  #   schedule: "0 5 * * *"
+  #   env:
+  #     PS_TIMETRACKER_COOKIE: "${PS_TIMETRACKER_COOKIE}"
+  #   output:
+  #     mode: argument
+  #     format: directory
+  #   timeout_seconds: 1800

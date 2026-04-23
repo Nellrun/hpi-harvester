@@ -11,6 +11,10 @@ services:
       # (see examples/harvester.yaml — the env-based variant is commented
       # out by default).
       - LASTFM_API_KEY=${LASTFM_API_KEY:-}
+      # Optional: ps-timetracker cookie for the env-based variant of the
+      # ps_timetracker exporter. Leave empty if you use the file-based variant
+      # (/secrets/ps_timetracker.cookie).
+      - PS_TIMETRACKER_COOKIE=${PS_TIMETRACKER_COOKIE:-}
     volumes:
       - ./config:/config:ro
       - ./secrets:/secrets:ro

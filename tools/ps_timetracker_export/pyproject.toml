@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ps-timetracker-export"
+version = "0.1.0"
+description = "Scrape ps-timetracker.com sessions for hpi-harvester"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.31",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+]
+
+[project.scripts]
+ps-timetracker-export = "ps_timetracker_export.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
