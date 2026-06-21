@@ -64,6 +64,12 @@ ENV TRAKTEXPORT_CFG=/state/traktexport.json
 COPY tools/ps_timetracker_export /tmp/ps_timetracker_export
 RUN pip install --no-cache-dir /tmp/ps_timetracker_export && rm -rf /tmp/ps_timetracker_export
 
+# gwm-stats /api/player aggregator — thin HTTP fetcher that lives in this
+# repo under tools/. No auth, no state file: one GET per run prints the
+# full snapshot JSON to stdout.
+COPY tools/gwm_stats_export /tmp/gwm_stats_export
+RUN pip install --no-cache-dir /tmp/gwm_stats_export && rm -rf /tmp/gwm_stats_export
+
 # Default volume mounts: configuration, read-only secrets, writable
 # exporter state (OAuth refresh tokens et al.), and the snapshot tree.
 VOLUME ["/config", "/secrets", "/state", "/data"]

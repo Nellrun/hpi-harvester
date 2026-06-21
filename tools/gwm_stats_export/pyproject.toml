@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gwm-stats-export"
+version = "0.1.0"
+description = "Fetch /api/player snapshots from the gwm-stats aggregator for hpi-harvester"
+requires-python = ">=3.12"
+dependencies = [
+    "requests>=2.31",
+]
+
+[project.scripts]
+gwm-stats-export = "gwm_stats_export.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -99,9 +99,22 @@ def has_next_page(html: str) -> bool:
 def parse_library(html: str) -> list[dict]:
     """Parse /profile/<user> landing page into aggregate per-game rows.
 
-    Columns: rank, title, platform, hours, sessions, avg_session, last_played.
-    Schema is simpler than sessions and may change with layout tweaks; keep
-    this tolerant and skip malformed rows rather than failing the whole run.
+    Columns (8 <td> cells):
+        0: rank
+        1: thumbnail (``<td class="mini">``) — ignored
+        2: game <a>
+        3: platform
+        4: hours — text plus data-sort="<seconds>"
+        5: sessions count
+        6: avg session — text plus data-sort="<seconds>"
+        7: last played — visible text is date-only ("YYYY-MM-DD") or a
+           relative string ("1 hour ago"). The authoritative value is
+           ``data-sort="<unix_epoch_seconds>"``, which we lift out as
+           ``last_played_unix`` so downstream consumers don't have to
+           re-parse the human text.
+
+    Schema may change with layout tweaks; keep this tolerant and skip
+    malformed rows rather than failing the whole run.
     """
     soup = _soup(html)
     table = soup.select_one("table tbody")
@@ -113,22 +126,23 @@ def parse_library(html: str) -> list[dict]:
     out: list[dict] = []
     for tr in table.find_all("tr", recursive=False):
         tds = tr.find_all("td", recursive=False)
-        if len(tds) < 7:
+        if len(tds) < 8:
             continue
-        game_link = tds[1].find("a", href=True)
+        game_link = tds[2].find("a", href=True)
         game_id_match = _GAME_ID_RE.search(game_link["href"]) if game_link else None
         out.append(
             {
                 "rank": _maybe_int(tds[0].get_text(strip=True)),
                 "game_id": game_id_match.group(1) if game_id_match else None,
                 "game_title": (game_link.get_text(strip=True) if game_link else None),
-                "platform": tds[2].get_text(strip=True) or None,
-                "hours_text": tds[3].get_text(strip=True) or None,
-                "hours_sort": _maybe_int(tds[3].get("data-sort")),
-                "sessions_count": _maybe_int(tds[4].get_text(strip=True)),
-                "avg_session_text": tds[5].get_text(strip=True) or None,
-                "avg_session_sort": _maybe_int(tds[5].get("data-sort")),
-                "last_played_local": tds[6].get_text(strip=True) or None,
+                "platform": tds[3].get_text(strip=True) or None,
+                "hours_text": tds[4].get_text(strip=True) or None,
+                "hours_sort": _maybe_int(tds[4].get("data-sort")),
+                "sessions_count": _maybe_int(tds[5].get_text(strip=True)),
+                "avg_session_text": tds[6].get_text(strip=True) or None,
+                "avg_session_sort": _maybe_int(tds[6].get("data-sort")),
+                "last_played_local": tds[7].get_text(strip=True) or None,
+                "last_played_unix": _maybe_int(tds[7].get("data-sort")),
             }
         )
     return out

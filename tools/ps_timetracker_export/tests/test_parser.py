@@ -55,6 +55,36 @@ def test_parse_library_handles_empty_without_login():
     assert parse_library("<html><body>no data</body></html>") == []
 
 
+def test_parse_library_extracts_rows_with_canonical_last_played():
+    rows = parse_library(_load("profile_library.html"))
+    assert len(rows) == 3
+
+    # Dated row: visible text is date-only, data-sort is the authoritative epoch.
+    assert rows[0] == {
+        "rank": 1,
+        "game_id": "PPSA20676_00",
+        "game_title": "VALORANT",
+        "platform": "PS5",
+        "hours_text": "368",
+        "hours_sort": 1324678,
+        "sessions_count": 279,
+        "avg_session_text": "1:20",
+        # avg_session data-sort is "4747.9498" — non-integer, so _maybe_int drops it.
+        "avg_session_sort": None,
+        "last_played_local": "2025-09-29",
+        "last_played_unix": 1759178109,
+    }
+
+    # Recently-played row: visible text is a relative string ("1 hour ago").
+    # The raw text is preserved; the canonical Unix timestamp carries the truth.
+    assert rows[1]["last_played_local"] == "1 hour ago"
+    assert rows[1]["last_played_unix"] == 1776512706
+
+    # Never-played row: no data-sort attribute and empty text — both None.
+    assert rows[2]["last_played_local"] is None
+    assert rows[2]["last_played_unix"] is None
+
+
 def test_resolve_cookie_accepts_bare_value(tmp_path):
     assert _resolve_cookie("abc123", None) == "abc123"
 
