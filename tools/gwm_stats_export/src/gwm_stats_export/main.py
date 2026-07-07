@@ -17,7 +17,7 @@ from typing import Optional
 
 import requests
 
-DEFAULT_BASE_URL = "http://79.184.75.92:3300"
+DEFAULT_BASE_URL = "https://gowithme.club/"
 DEFAULT_ENDPOINT = "/api/player"
 DEFAULT_USER_AGENT = "hpi-harvester/gwm-stats-export (+https://github.com/)"
 DEFAULT_TIMEOUT = 60.0
